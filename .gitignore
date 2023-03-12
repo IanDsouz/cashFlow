@@ -1,0 +1,30 @@
+# Ignore compiled files
+*.pyc
+*.pyo
+*.pyd
+*.class
+*.js
+*.css
+*.map
+
+# Ignore runtime files
+__pycache__/
+*.log
+*.env
+
+# Ignore static files
+/static/
+
+# Ignore database files
+*.sqlite3
+*.db
+
+# Ignore IDE and editor files
+.vscode/
+.idea/
+
+# Ignore node modules
+node_modules/
+
+# Ignore compiled React files
+build/

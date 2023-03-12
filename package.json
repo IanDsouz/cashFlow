@@ -1,0 +1,31 @@
+{
+  "dependencies": {
+    "@emotion/react": "^11.10.5",
+    "@emotion/styled": "^11.10.5",
+    "@fontsource/roboto": "^4.5.8",
+    "@fullcalendar/core": "^6.0.3",
+    "@fullcalendar/daygrid": "^6.0.3",
+    "@fullcalendar/interaction": "^6.0.3",
+    "@fullcalendar/list": "^6.0.3",
+    "@fullcalendar/timegrid": "^6.0.3",
+    "@material-ui/core": "^4.12.4",
+    "@mui/icons-material": "^5.11.0",
+    "@mui/material": "^5.11.7",
+    "@mui/styles": "^5.11.7",
+    "@mui/x-data-grid": "^5.17.22",
+    "@nivo/bar": "^0.80.0",
+    "@nivo/core": "^0.80.0",
+    "@nivo/geo": "^0.80.0",
+    "@nivo/pie": "^0.80.0",
+    "axios": "^1.3.2",
+    "babel-preset-es2015": "^6.24.1",
+    "formik": "^2.2.9",
+    "react-pro-sidebar": "^1.0.0",
+    "react-router-dom": "^6.8.1",
+    "recharts": "^2.3.2",
+    "yup": "^0.32.11"
+  },
+  "devDependencies": {
+    "eslint-plugin-react-hooks": "^4.6.0"
+  }
+}
