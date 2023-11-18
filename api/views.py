@@ -1,27 +1,147 @@
 from rest_framework import status
+from django.core import serializers as serializers_core
 from django.http import HttpResponse
 from rest_framework import serializers,viewsets
 from django.http import JsonResponse
-from django.db.models import Sum, Case, When, Value, IntegerField
+from django.db.models import Sum, Case, When, Value, IntegerField, Q, F, ExpressionWrapper, fields
 from rest_framework import generics
-from .models import Expense, Budget, Category, Tag, Account
-from .serializers import ExpenseSerializer, BudgetSerializer, CategorySerializer
+from .models import Expense, Budget, Category, Tag, Account, User
+from .serializers import ExpenseSerializer, BudgetSerializer, CategorySerializer, ExpenseDisplaySerializer, TagSerializer
 from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view
-
 from rest_framework.decorators import api_view, renderer_classes
 from rest_framework.renderers import JSONRenderer
+from rest_framework.parsers import MultiPartParser, FormParser, FileUploadParser
+from rest_framework import status
+import csv
+import io
+import datetime
+from collections import Counter
+import io, csv, pandas as pd
+from django.db import connection
+from django.db.models.functions import Coalesce
+import calendar
 
+class ExpenseCreateAPIView(generics.CreateAPIView):
+    queryset = Expense.objects.all()
+    serializer_class = ExpenseSerializer
+
+    def process_csv_file(self, file, account_name):
+        expenses = []
+        tags_found_count = 0
+        tags_not_found_count = 0
+        descriptions = []
+
+        try:
+            df = pd.read_csv(file)
+        except pd.errors.EmptyDataError:
+            raise ValueError("The CSV file is empty or in an unsupported format.")
+
+        for index, row in df.iterrows():
+            date_str = row['Date']
+            description = row['Description']
+            amount_str = row['Amount']
+            reference = row['Reference']
+
+            try:
+                amount = float(amount_str)
+            except ValueError:
+                raise ValueError(f"Invalid amount value: {amount_str}")
+
+            if amount >0:
+                date_format = '%d/%m/%Y'
+                try:
+                    parsed_date = datetime.datetime.strptime(date_str, date_format).date()
+                except ValueError:
+                    raise ValueError(f"Invalid date format: {date_str}")
+
+                try:
+                    category_name = False
+                    tag_name = False
+                    description_text = description.split() if 'Description' in df.columns else []
+                    filtered_words = [word for word in description_text if len(word) >= 3]
+
+                    if filtered_words:
+                        description_text = filtered_words[0]
+
+                    tag = Tag.objects.filter(raw_description__istartswith=description_text).first()
+                    account = get_object_or_404(Account, pk=1)
+                    user = get_object_or_404(User, pk=1)
+                    if tag is None:
+                        category = get_object_or_404(Category, pk=6)
+                        tag = get_object_or_404(Tag, pk=70)
+                        tags_not_found_count += 1
+                        descriptions.append(description_text)
+                    else:
+                        tags_found_count += 1
+                        tag_id= tag.id if tag else None
+                        category = tag.category
+
+                except Tag.DoesNotExist:
+                    category = None
+                    recurring = False
+                expense = {
+                    'transaction_id': reference.strip("'"),
+                    'amount': amount,
+                    'category': category.id, 
+                    'date': parsed_date,
+                    'tag': tag.id,
+                    'notes': '',
+                    'description': description,
+                    'recurring': False,
+                    'next_occurrence': None,
+                    'payment_method': "Card",
+                    'account': account.id,
+                    'user': user.id,
+                    'statement_text': description_text
+                }
+                expenses.append(expense)
+
+        print('tags_found_count',tags_found_count)
+        print('tags_not_found_count',tags_not_found_count)
+        description_counts = Counter(descriptions)
+        for description, count in description_counts.items():
+            print(f"{description}: {count}")
+            
+        return expenses
+
+    def post(self, request, *args, **kwargs):
+        file = request.FILES.get('file')
+        account_name = request.data.get('account_name')
+
+        if not file or not account_name:
+            return JsonResponse(
+                {'error': 'Missing file or account name'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Process the CSV file and create expenses
+        expenses = self.process_csv_file(file, account_name)
+        serializer = self.get_serializer(data=expenses, many=True)
+        
+        if serializer.is_valid():
+            serializer.save()
+
+            return JsonResponse(
+                {'message': 'Expenses created successfully',
+                'data': serializer.data},
+                status=status.HTTP_201_CREATED
+            )
+        else:
+            return JsonResponse(
+                {'error': expenses},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 class CategoryList(generics.ListAPIView):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
 
-def expense_summary(request, month):
-    queryset = Expense.objects.filter(date__month=month)
-    serializer = ExpenseSerializer(queryset, many=True)
+def expense_summary(request, year, month):
+    queryset = Expense.objects.filter(date__year=year, date__month=month)
+    serializer = ExpenseDisplaySerializer(queryset, many=True)
     categories = Category.objects.all()
-    expenses = Expense.objects.filter(date__month=month).values('category__name').annotate(total=Sum('amount'))
+    expenses = Expense.objects.filter(date__year=year, date__month=month).values('category__name').annotate(total=Sum('amount'))
     total_expense = round(sum(float(expense['amount']) for expense in serializer.data), 2)
 
     category_expenses = []
@@ -31,14 +151,106 @@ def expense_summary(request, month):
         if expense:
             budget = Budget.objects.get(category=category)
             planned_expense = budget.start_balance
+            total = float(expense['total'])
             planned_budget = planned_budget + round(budget.start_balance, 2)
-            category_expenses.append({'name': category.name, 'total': round(expense['total'], 2), 'planned_expense': planned_expense})
+
+            expenses_list = ExpenseSerializer(
+                            Expense.objects.filter(date__year=year, date__month=month, category=category),
+                            many=True,
+                            context={'request': request}  # Pass the request context to the serializer
+                        ).data
+
+            for expense_item in expenses_list:
+                expense_item['tag'] = TagSerializer(
+                    Tag.objects.get(id=expense_item['tag']),  # Fetch the Tag object by ID
+                    context={'request': request}  # Pass the request context to the serializer
+                ).data
+
+            category_expenses.append({
+            'name': category.name,
+            'total': round(total, 2),
+            'planned_expense': planned_expense,
+            'expenses': expenses_list
+        })
+        else:
+            budget = Budget.objects.get(category=category)
+            planned_expense = budget.start_balance
+            planned_budget = planned_budget + round(budget.start_balance, 2)
+            category_expenses.append({
+                'name': category.name,
+                'total': 0,
+                'planned_expense': planned_expense,
+                'expenses': list(Expense.objects.filter(date__year=year, date__month=month, category=category).values())
+            })
+    return JsonResponse({'expenses': category_expenses, 'total_expense': total_expense, 'planned_budget': planned_budget})
+
+
+def expense_yearly_totals(request, year):
+    queryset = Expense.objects.filter(date__year=year)
+    serializer = ExpenseSerializer(queryset, many=True)
+    categories = Category.objects.all()
+
+    expenses = Expense.objects.filter(date__year=year).values('category__name').annotate(total=Sum('amount'))
+    total_expense = round(sum(float(expense['amount']) for expense in serializer.data), 2)
+
+    category_expenses = []
+    planned_budget = 0
+    for category in categories:
+        expense = next((x for x in expenses if x['category__name'] == category.name), None)
+        if expense:
+            budget = Budget.objects.get(category=category)
+            planned_expense = budget.start_balance
+            total = float(expense['total'])
+            planned_budget = planned_budget + round(budget.start_balance, 2)
+            category_expenses.append({'name': category.name, 'total': round(total, 2), 'planned_expense': planned_expense})
         else:
             budget = Budget.objects.get(category=category)
             planned_expense = budget.start_balance
             planned_budget = planned_budget + round(budget.start_balance, 2)
             category_expenses.append({'name': category.name, 'total': 0, 'planned_expense': planned_expense})
-    return JsonResponse({'expenses': category_expenses, 'total_expense': total_expense, 'planned_budget': planned_budget})
+
+    return JsonResponse({'year': year, 'expenses': category_expenses, 'total_expense': total_expense, 'planned_budget': planned_budget})
+
+
+@api_view(['GET'])
+def expense_year_monthly_totals(request, year):
+    # Get all months within the specified year
+    months = [str(month) for month in range(1, 13)]
+    month_names = [calendar.month_name[int(month)] for month in months]
+
+    # Initialize a list to store monthly totals as objects  
+    yearly_expenses = []
+
+    # Loop through each month and calculate expenses
+    for month, month_name in zip(months, month_names):
+        # Calculate the total expenses for each category in the specified month and year
+        expenses = Expense.objects.filter(date__year=year, date__month=month) \
+            .values('category__name') \
+            .annotate(total=Coalesce(Sum(F('amount')), 0.0, output_field=fields.FloatField()))
+
+        # Calculate the total expenses for this month
+        total_expense = round(sum(expense['total'] for expense in expenses), 2)
+
+        # Append the monthly total as an object to the list
+        yearly_expenses.append({'name': month_name, 'value': total_expense})
+
+    # Calculate the total planned budget for the year
+    categories = Category.objects.all()
+    planned_budget = sum(budget.start_balance for budget in Budget.objects.filter(category__in=categories))
+
+    # Calculate the total actual expenses for the year
+    total_expense = sum(expense['value'] for expense in yearly_expenses)
+
+    response_data = {
+        'year': year,
+        'monthly_totals': yearly_expenses,
+        'total_expense': round(total_expense, 2),
+        'planned_budget': round(planned_budget, 2)
+    }
+
+    return JsonResponse(response_data)
+
+
 
 
 @api_view(['GET'])
@@ -72,30 +284,72 @@ def expense_list(request):
         'data': expenses_data
     })
 
+
+@api_view(['GET'])
+def expenses_by_tag(request):
+    # Get parameters from the request
+    tag_id = request.GET.get('tag_id')
+    year = request.GET.get('year')
+    month = request.GET.get('month')
+
+    # Query expenses based on tag, year, and month
+    expenses = Expense.objects.filter(
+        tag_id=tag_id,
+        date__year=year,
+        date__month=month
+    )
+
+    # Serialize the expenses
+    serialized_expenses = ExpenseSerializer(expenses, many=True).data
+
+    total_monthly_amount = round(sum(float(expense['amount']) for expense in serialized_expenses), 2)
+
+    # Calculate the total tag data for the entire year
+    expenses_yearly = Expense.objects.filter(
+        tag_id=tag_id,
+        date__year=year
+    )
+    total_yearly_amount = round(sum(float(expense.amount) for expense in expenses_yearly), 2)
+
+    return JsonResponse({
+        'expenses': serialized_expenses,
+        'total_monthly_amount': total_monthly_amount,
+        'total_yearly_amount': total_yearly_amount
+    })
+
+
+
+
+
+
+
+
+
 @api_view(['POST'])
 def create_expense(request):
     serializer = ExpenseSerializer(data=request.data)
-    print(request.data)
+    print(serializer)
     
     if serializer.is_valid():
         # Get the category and tag objects from the foreign keys
         category = get_object_or_404(Category, pk=request.data['category'])
         tag = get_object_or_404(Tag, pk=request.data['tag'])
         account = get_object_or_404(Account, pk=request.data['account'])
-        print(tag, category, account)
+        user = get_object_or_404(User, pk=request.data['user'])
 
         # # Create the expense object with the validated serializer data and related objects
-        expense = serializer.save(category=category, tag=tag)
+        expense = serializer.save(category=category,account=account, tag=tag, user=user)
 
         # print(expense)
 
-        # # Set the payment method based on the foreign key
-        payment_method = request.data['payment_method']
+        # # # Set the payment method based on the foreign key
+        # payment_method = request.data['payment_method']
 
-        # # Set the payment method based on the foreign key
-        account = request.data['account']
-        # expense.payment_method = payment_method
-        # expense.save()
+        # # # Set the payment method based on the foreign key
+        # account = request.data['account']
+        # # expense.payment_method = payment_method
+        # # expense.save()
 
         return JsonResponse(serializer.data, status=status.HTTP_201_CREATED)
     return JsonResponse(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    

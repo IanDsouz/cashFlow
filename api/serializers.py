@@ -32,19 +32,32 @@ class TagSerializer(serializers.ModelSerializer):
         model = Tag
         fields = '__all__'
 
-
-
 class ExpenseSerializer(serializers.ModelSerializer):
-    tag = TagSerializer(many=False, read_only=True)
-    category = CategorySerializer(many=False, read_only=True)
-    account = AccountSerializer(many=False, read_only=True)
+    # tag = TagSerializer(many=False, read_only=True)
+    # category = CategorySerializer(many=False, read_only=True)
+    # account = AccountSerializer(many=False, read_only=True)
+    # user = UserSerializer(many=False, read_only=True)
+
+    category = serializers.PrimaryKeyRelatedField(queryset=Category.objects.all())
+    tag = serializers.PrimaryKeyRelatedField(queryset=Tag.objects.all())
+    account = serializers.PrimaryKeyRelatedField(queryset=Account.objects.all())
+    user = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
 
     class Meta:
         model = Expense
-        fields = ('id', 'date', 'amount', 'tag', 'category', 'payment_method', 'account', 'user')
+        fields = ('id', 'transaction_id', 'date', 'amount', 'tag', 'category', 'payment_method', 'account', 'user', 'statement_text','description' )
         depth = 1
 
+class ExpenseDisplaySerializer(serializers.ModelSerializer):
+    tag = TagSerializer()
+    category = CategorySerializer(many=False, read_only=True)
+    account = AccountSerializer(many=False, read_only=True)
+    user = UserSerializer(many=False, read_only=True)
 
+    class Meta:
+        model = Expense
+        fields = ('id', 'transaction_id', 'date', 'amount', 'tag', 'category', 'payment_method', 'account', 'user', 'statement_text','description' )
+        depth = 1
 
 class BudgetSerializer(serializers.ModelSerializer):
     class Meta:
