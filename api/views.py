@@ -4,9 +4,9 @@ from django.http import HttpResponse
 from rest_framework import serializers,viewsets
 from django.http import JsonResponse
 from django.db.models import Sum, Case, When, Value, IntegerField, Q, F, ExpressionWrapper, fields
-from rest_framework import generics
+from rest_framework import generics, permissions
 from .models import Expense, Budget, Category, Tag, Account, User
-from .serializers import ExpenseSerializer, BudgetSerializer, CategorySerializer, ExpenseDisplaySerializer, TagSerializer
+from .serializers import UserSerializer, ExpenseSerializer, BudgetSerializer, CategorySerializer, ExpenseDisplaySerializer, TagSerializer
 from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view
 from rest_framework.decorators import api_view, renderer_classes
@@ -21,6 +21,8 @@ import io, csv, pandas as pd
 from django.db import connection
 from django.db.models.functions import Coalesce
 import calendar
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.views import APIView
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -44,7 +46,7 @@ class ExpenseCreateAPIView(generics.CreateAPIView):
     queryset = Expense.objects.all()
     serializer_class = ExpenseSerializer
 
-    def process_csv_file(self, file, account_name):
+    def process_csv_file(self, file):
         expenses = []
         tags_found_count = 0
         tags_not_found_count = 0
@@ -125,16 +127,15 @@ class ExpenseCreateAPIView(generics.CreateAPIView):
 
     def post(self, request, *args, **kwargs):
         file = request.FILES.get('file')
-        account_name = request.data.get('account_name')
 
-        if not file or not account_name:
+        if not file :
             return JsonResponse(
                 {'error': 'Missing file or account name'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         # Process the CSV file and create expenses
-        expenses = self.process_csv_file(file, account_name)
+        expenses = self.process_csv_file(file)
         serializer = self.get_serializer(data=expenses, many=True)
         
         if serializer.is_valid():
@@ -338,8 +339,18 @@ def expenses_by_tag(request):
     })
 
 
+class UserRegistrationView(generics.CreateAPIView):
+    serializer_class = UserSerializer
+    permission_classes = [permissions.AllowAny]
 
+class UserLoginView(APIView):
+    def post(self, request):
+        data = request.data
+        serializer = UserSerializer(data=data)
+        serializer.is_valid(raise_exception=True)
 
+        user = serializer.validated_data['user']
+        refresh = RefreshToken.for_user(user)
 
 @api_view(['POST'])
 def create_expense(request):
