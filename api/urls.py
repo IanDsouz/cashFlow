@@ -1,7 +1,8 @@
 from django.urls import path
 from django.conf.urls import url, include
-from .views import expense_summary,expense_list, create_expense, CategoryList, ExpenseCreateAPIView, expense_yearly_totals,expense_year_monthly_totals, expenses_by_tag
+from .views import expense_summary,expense_list, create_expense, CategoryList, ExpenseCreateAPIView, expense_yearly_totals,expense_year_monthly_totals, expenses_by_tag,LogoutView
 from rest_framework import routers
+
 
 router = routers.DefaultRouter()
 
@@ -14,4 +15,5 @@ urlpatterns = [
     path('categories/', CategoryList.as_view()),
     path('expense', ExpenseCreateAPIView.as_view(), name='expense-create'),
     path('expenses_by_tag', expenses_by_tag, name='expenses_by_tag'),
+    path('logout/', LogoutView, name ='logout')
 ]

@@ -22,6 +22,24 @@ from django.db import connection
 from django.db.models.functions import Coalesce
 import calendar
 
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from django.views.decorators.csrf import csrf_exempt
+
+@authentication_classes([])
+@permission_classes([IsAuthenticated])
+class LogoutView(APIView):
+    def post(self, request):
+        try:
+            refresh_token = request.data["refresh_token"]
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+            return Response(status=status.HTTP_205_RESET_CONTENT)
+        except Exception as e:
+            return Response(status=status.HTTP_400_BAD_REQUEST)
+
 class ExpenseCreateAPIView(generics.CreateAPIView):
     queryset = Expense.objects.all()
     serializer_class = ExpenseSerializer
@@ -185,6 +203,8 @@ def expense_summary(request, year, month):
     return JsonResponse({'expenses': category_expenses, 'total_expense': total_expense, 'planned_budget': planned_budget})
 
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def expense_yearly_totals(request, year):
     queryset = Expense.objects.filter(date__year=year)
     serializer = ExpenseSerializer(queryset, many=True)
@@ -316,10 +336,6 @@ def expenses_by_tag(request):
         'total_monthly_amount': total_monthly_amount,
         'total_yearly_amount': total_yearly_amount
     })
-
-
-
-
 
 
 
