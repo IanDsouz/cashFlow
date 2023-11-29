@@ -4,9 +4,9 @@ from django.http import HttpResponse
 from rest_framework import serializers,viewsets
 from django.http import JsonResponse
 from django.db.models import Sum, Case, When, Value, IntegerField, Q, F, ExpressionWrapper, fields
-from rest_framework import generics
+from rest_framework import generics, permissions
 from .models import Expense, Budget, Category, Tag, Account, User
-from .serializers import ExpenseSerializer, BudgetSerializer, CategorySerializer, ExpenseDisplaySerializer, TagSerializer
+from .serializers import UserSerializer, ExpenseSerializer, BudgetSerializer, CategorySerializer, ExpenseDisplaySerializer, TagSerializer
 from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view
 from rest_framework.decorators import api_view, renderer_classes
@@ -21,12 +21,14 @@ import io, csv, pandas as pd
 from django.db import connection
 from django.db.models.functions import Coalesce
 import calendar
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.views import APIView
 
 class ExpenseCreateAPIView(generics.CreateAPIView):
     queryset = Expense.objects.all()
     serializer_class = ExpenseSerializer
 
-    def process_csv_file(self, file, account_name):
+    def process_csv_file(self, file):
         expenses = []
         tags_found_count = 0
         tags_not_found_count = 0
@@ -107,16 +109,15 @@ class ExpenseCreateAPIView(generics.CreateAPIView):
 
     def post(self, request, *args, **kwargs):
         file = request.FILES.get('file')
-        account_name = request.data.get('account_name')
 
-        if not file or not account_name:
+        if not file :
             return JsonResponse(
                 {'error': 'Missing file or account name'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         # Process the CSV file and create expenses
-        expenses = self.process_csv_file(file, account_name)
+        expenses = self.process_csv_file(file)
         serializer = self.get_serializer(data=expenses, many=True)
         
         if serializer.is_valid():
@@ -318,38 +319,27 @@ def expenses_by_tag(request):
     })
 
 
+class UserRegistrationView(generics.CreateAPIView):
+    serializer_class = UserSerializer
+    permission_classes = [permissions.AllowAny]
 
+class UserLoginView(APIView):
+    def post(self, request):
+        data = request.data
+        serializer = UserSerializer(data=data)
+        serializer.is_valid(raise_exception=True)
 
+        user = serializer.validated_data['user']
+        refresh = RefreshToken.for_user(user)
 
+        return Response({
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+        })
 
+class UserProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
 
-
-
-@api_view(['POST'])
-def create_expense(request):
-    serializer = ExpenseSerializer(data=request.data)
-    print(serializer)
-    
-    if serializer.is_valid():
-        # Get the category and tag objects from the foreign keys
-        category = get_object_or_404(Category, pk=request.data['category'])
-        tag = get_object_or_404(Tag, pk=request.data['tag'])
-        account = get_object_or_404(Account, pk=request.data['account'])
-        user = get_object_or_404(User, pk=request.data['user'])
-
-        # # Create the expense object with the validated serializer data and related objects
-        expense = serializer.save(category=category,account=account, tag=tag, user=user)
-
-        # print(expense)
-
-        # # # Set the payment method based on the foreign key
-        # payment_method = request.data['payment_method']
-
-        # # # Set the payment method based on the foreign key
-        # account = request.data['account']
-        # # expense.payment_method = payment_method
-        # # expense.save()
-
-        return JsonResponse(serializer.data, status=status.HTTP_201_CREATED)
-    return JsonResponse(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+    def get(self, request):
+        serializer = UserSerializer(request.user)
+        return Response(serializer.data)
