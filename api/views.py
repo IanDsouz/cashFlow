@@ -3,7 +3,7 @@ from django.core import serializers as serializers_core
 from django.http import HttpResponse
 from rest_framework import serializers,viewsets
 from django.http import JsonResponse
-from django.db.models import Sum, Case, When, Value, IntegerField, Q, F, ExpressionWrapper, fields
+from django.db.models import Sum, Case, When, Value, IntegerField, Q, F, ExpressionWrapper, fields, FloatField
 from rest_framework import generics, permissions
 from .models import Expense, Budget, Category, Tag, Account, User
 from .serializers import UserSerializer, ExpenseSerializer, BudgetSerializer, CategorySerializer, ExpenseDisplaySerializer, TagSerializer
@@ -23,24 +23,25 @@ from django.db.models.functions import Coalesce
 import calendar
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.views import APIView
-
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from django.views.decorators.csrf import csrf_exempt
+from django.db.models import Max
 
-@authentication_classes([])
-@permission_classes([IsAuthenticated])
 class LogoutView(APIView):
-    def post(self, request):
-        try:
-            refresh_token = request.data["refresh_token"]
-            token = RefreshToken(refresh_token)
-            token.blacklist()
-            return Response(status=status.HTTP_205_RESET_CONTENT)
-        except Exception as e:
-            return Response(status=status.HTTP_400_BAD_REQUEST)
+     permission_classes = (IsAuthenticated,)
+     def post(self, request):
+          
+          try:
+               refresh_token = request.data["refresh_token"]
+               print(refresh_token)
+               token = RefreshToken(refresh_token)
+               token.blacklist()
+               return Response(status=status.HTTP_205_RESET_CONTENT)
+          except Exception as e:
+               return Response(status=status.HTTP_400_BAD_REQUEST)
 
 class ExpenseCreateAPIView(generics.CreateAPIView):
     queryset = Expense.objects.all()
@@ -204,8 +205,60 @@ def expense_summary(request, year, month):
     return JsonResponse({'expenses': category_expenses, 'total_expense': total_expense, 'planned_budget': planned_budget})
 
 
+def expense_summary_top(request, year, month):
+    queryset = Expense.objects.filter(date__year=year, date__month=month)
+    serializer = ExpenseDisplaySerializer(queryset, many=True)
+    categories = Category.objects.all()
+    expenses = Expense.objects.filter(date__year=year, date__month=month).values('category__name').annotate(total=Sum('amount'))
+    total_expense = round(sum(float(expense['amount']) for expense in serializer.data), 2)
+
+    category_expenses = []
+    planned_budget = 0
+    for category in categories:
+        expense = next((x for x in expenses if x['category__name'] == category.name), None)
+        if expense:
+            budget = Budget.objects.get(category=category)
+            planned_expense = budget.start_balance
+            total = float(expense['total'])
+            planned_budget = planned_budget + round(budget.start_balance, 2)
+
+            expenses_list = ExpenseSerializer(
+                            Expense.objects.filter(date__year=year, date__month=month, category=category),
+                            many=True,
+                            context={'request': request}  # Pass the request context to the serializer
+                        ).data
+
+            for expense_item in expenses_list:
+                expense_item['tag'] = TagSerializer(
+                    Tag.objects.get(id=expense_item['tag']),  # Fetch the Tag object by ID
+                    context={'request': request}  # Pass the request context to the serializer
+                ).data
+
+            category_expenses.sort(key=lambda x: x['total'], reverse=True)
+
+            category_expenses.append({
+            'name': category.name,
+            'total': round(total, 2),
+            'planned_expense': planned_expense,
+            'expenses': expenses_list
+
+        })
+        else:
+            budget = Budget.objects.get(category=category)
+            planned_expense = budget.start_balance
+            planned_budget = planned_budget + round(budget.start_balance, 2)
+            category_expenses.append({
+                'name': category.name,
+                'total': 0,
+                'planned_expense': planned_expense,
+                'expenses': list(Expense.objects.filter(date__year=year, date__month=month, category=category).values())
+            })
+        top_expenses = category_expenses[:6]
+    return JsonResponse({'expenses': top_expenses, 'total_expense': total_expense, 'planned_budget': planned_budget})
+
+
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+# @permission_classes([IsAuthenticated])
 def expense_yearly_totals(request, year):
     queryset = Expense.objects.filter(date__year=year)
     serializer = ExpenseSerializer(queryset, many=True)
@@ -234,7 +287,7 @@ def expense_yearly_totals(request, year):
 
 
 @api_view(['GET'])
-def expense_year_monthly_totals(request, year):
+def expense_year_monthly(request, year):
     # Get all months within the specified year
     months = [str(month) for month in range(1, 13)]
     month_names = [calendar.month_name[int(month)] for month in months]
@@ -272,7 +325,56 @@ def expense_year_monthly_totals(request, year):
     return JsonResponse(response_data)
 
 
+@api_view(['GET'])
+def expense_year_monthly_totals(request, start_year):
+    # Determine the latest year available in the data
+    latest_year = Expense.objects.aggregate(Max('date__year'))['date__year__max']
 
+    # Ensure start_year is within a valid range
+    start_year = max(start_year, 2000)  # Adjust the minimum year as needed
+    start_year = min(start_year, latest_year)
+
+    # Initialize a list to store yearly data
+    yearly_data = []
+
+    # Loop through each year from start_year to the latest year
+    for year in range(start_year, latest_year + 1):
+        # Get all months within the specified year
+        months = [str(month) for month in range(1, 13)]
+        month_names = [calendar.month_name[int(month)] for month in months]
+
+        # Initialize a list to store monthly totals as objects
+        yearly_expenses = []
+
+        # Loop through each month and calculate expenses
+        for month, month_name in zip(months, month_names):
+            # Calculate the total expenses for each category in the specified month and year
+            expenses = Expense.objects.filter(date__year=year, date__month=month) \
+                .values('category__name') \
+                .annotate(total=Coalesce(Sum(F('amount')), 0.0, output_field=FloatField()))
+
+            # Calculate the total expenses for this month
+            total_expense = round(sum(expense['total'] for expense in expenses), 2)
+
+            # Append the monthly total as an object to the list
+            yearly_expenses.append({'name': month_name, 'value': total_expense})
+
+        # Calculate the total planned budget for the year
+        categories = Category.objects.all()
+        planned_budget = sum(budget.start_balance for budget in Budget.objects.filter(category__in=categories))
+
+        # Calculate the total actual expenses for the year
+        total_expense = sum(expense['value'] for expense in yearly_expenses)
+
+        # Append yearly data to the list
+        yearly_data.append({
+            'year': year,
+            'monthly_totals': yearly_expenses,
+            'total_expense': round(total_expense, 2),
+            'planned_budget': round(planned_budget, 2)
+        })
+
+    return JsonResponse({'data': yearly_data})
 
 @api_view(['GET'])
 @renderer_classes([JSONRenderer])
@@ -307,6 +409,7 @@ def expense_list(request):
 
 
 @api_view(['GET'])
+# @permission_classes([IsAuthenticated])
 def expenses_by_tag(request):
     # Get parameters from the request
     tag_id = request.GET.get('tag_id')
