@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import User, Budget, Income, Expense, Category, Account, Tag
+from .models import User, Budget, Income, Expense, Category, Account, Tag, SavingArea
 
 class IncomeInline(admin.TabularInline):
     model = Income
@@ -20,3 +20,4 @@ admin.site.register(Income)
 admin.site.register(Category)
 admin.site.register(Account)
 admin.site.register(Tag)
+admin.site.register(SavingArea)
