@@ -14,6 +14,29 @@ class User(models.Model):
     def __str__(self):
         return  self.name
 
+class SavingArea(models.Model):
+    name = models.CharField(max_length=255)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, default='Ian')
+    notes = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    priority = models.IntegerField(default=1)
+    completion_date = models.DateField(null=True, blank=True)
+    target_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("active", "Active"),
+            ("inactive", "Inactive"),
+            ("completed", "Completed"),
+        ],
+        default="active",
+    )
+    icon = models.TextField(null=True, blank=True)
+
+    def __str__(self):
+        return self.name
+
 class Budget(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE,default='Ian')
     start_balance = models.DecimalField(max_digits=10, decimal_places=2,default=0)
@@ -23,6 +46,7 @@ class Budget(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     name = models.CharField(max_length=255)
     is_default = models.BooleanField(default=True)
+    saving_area = models.ForeignKey(SavingArea, on_delete=models.SET_NULL, null=True, blank=True)
 
     def __str__(self):
         return  self.name
@@ -32,6 +56,7 @@ class Category(models.Model):
     budget = models.ForeignKey(Budget, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    saving_area = models.ForeignKey(SavingArea, on_delete=models.SET_NULL, null=True, blank=True)
 
     def __str__(self):
         return  self.name
@@ -44,6 +69,7 @@ class Account(models.Model):
     balance = models.DecimalField(max_digits=10, decimal_places=2,default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    saving_area = models.ForeignKey(SavingArea, on_delete=models.SET_NULL, null=True, blank=True)
 
     def __str__(self):
         return  self.name
@@ -69,6 +95,7 @@ class Tag(models.Model):
     category = models.ForeignKey(Category, on_delete=models.CASCADE,default='')
     notes = models.TextField(null=True, blank=True)
     raw_description = models.TextField(null=True, blank=True)
+    saving_area = models.ForeignKey(SavingArea, on_delete=models.SET_NULL, null=True, blank=True)
     
     def __str__(self):
         return f'{self.name} - {self.category.name}'
@@ -90,6 +117,8 @@ class Expense(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE,default=1)
     statement_text = models.TextField(null=True, blank=True)
-    
+    saving_area = models.ForeignKey(SavingArea, on_delete=models.SET_NULL, null=True, blank=True)
+    is_saving = models.BooleanField(default=False)
+
     def __str__(self):
         return  self.category.name + ' - ' +self.tag.name + ' - ' + str(self.amount) + '-' + str(self.date)

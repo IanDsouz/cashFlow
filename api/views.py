@@ -20,7 +20,7 @@ from collections import Counter
 import io, csv, pandas as pd
 from django.db import connection
 from django.db.models.functions import Coalesce
-import calendar
+import calendar 
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.views import APIView
 from rest_framework.views import APIView
@@ -158,7 +158,7 @@ class CategoryList(generics.ListAPIView):
     serializer_class = CategorySerializer
 
 def expense_summary(request, year, month):
-    queryset = Expense.objects.filter(date__year=year, date__month=month)
+    queryset = Expense.objects.filter(date__year=year, date__month=month, is_saving=False)
     serializer = ExpenseDisplaySerializer(queryset, many=True)
     categories = Category.objects.all()
     expenses = Expense.objects.filter(date__year=year, date__month=month).values('category__name').annotate(total=Sum('amount'))
@@ -206,10 +206,10 @@ def expense_summary(request, year, month):
 
 
 def expense_summary_top(request, year, month):
-    queryset = Expense.objects.filter(date__year=year, date__month=month)
+    queryset = Expense.objects.filter(date__year=year, date__month=month, is_saving=False)
     serializer = ExpenseDisplaySerializer(queryset, many=True)
     categories = Category.objects.all()
-    expenses = Expense.objects.filter(date__year=year, date__month=month).values('category__name').annotate(total=Sum('amount'))
+    expenses = Expense.objects.filter(date__year=year, date__month=month, is_saving=False).values('category__name').annotate(total=Sum('amount'))
     total_expense = round(sum(float(expense['amount']) for expense in serializer.data), 2)
 
     category_expenses = []
@@ -228,7 +228,7 @@ def expense_summary_top(request, year, month):
                             context={'request': request}  # Pass the request context to the serializer
                         ).data
 
-            for expense_item in expenses_list:
+            for  expense_item in expenses_list:
                 expense_item['tag'] = TagSerializer(
                     Tag.objects.get(id=expense_item['tag']),  # Fetch the Tag object by ID
                     context={'request': request}  # Pass the request context to the serializer
@@ -253,14 +253,14 @@ def expense_summary_top(request, year, month):
                 'planned_expense': planned_expense,
                 'expenses': list(Expense.objects.filter(date__year=year, date__month=month, category=category).values())
             })
-        top_expenses = category_expenses[:6]
+        top_expenses = category_expenses[:5]
     return JsonResponse({'expenses': top_expenses, 'total_expense': total_expense, 'planned_budget': planned_budget})
 
 
 @api_view(['GET'])
 # @permission_classes([IsAuthenticated])
 def expense_yearly_totals(request, year):
-    queryset = Expense.objects.filter(date__year=year)
+    queryset = Expense.objects.filter(date__year=year, is_saving=False)
     serializer = ExpenseSerializer(queryset, many=True)
     categories = Category.objects.all()
 
@@ -298,7 +298,7 @@ def expense_year_monthly(request, year):
     # Loop through each month and calculate expenses
     for month, month_name in zip(months, month_names):
         # Calculate the total expenses for each category in the specified month and year
-        expenses = Expense.objects.filter(date__year=year, date__month=month) \
+        expenses = Expense.objects.filter(date__year=year, date__month=month, is_saving=False) \
             .values('category__name') \
             .annotate(total=Coalesce(Sum(F('amount')), 0.0, output_field=fields.FloatField()))
 
@@ -349,7 +349,7 @@ def expense_year_monthly_totals(request, start_year):
         # Loop through each month and calculate expenses
         for month, month_name in zip(months, month_names):
             # Calculate the total expenses for each category in the specified month and year
-            expenses = Expense.objects.filter(date__year=year, date__month=month) \
+            expenses = Expense.objects.filter(date__year=year, date__month=month, is_saving=False) \
                 .values('category__name') \
                 .annotate(total=Coalesce(Sum(F('amount')), 0.0, output_field=FloatField()))
 
@@ -382,7 +382,7 @@ def expense_list(request):
     category = request.query_params.get('category', None)
     month = request.query_params.get('month', None)
 
-    expenses = Expense.objects.all()
+    expenses = Expense.objects.filter(is_saving=False)
 
     if category is not None:
         expenses = expenses.filter(category__name=category)
@@ -420,7 +420,8 @@ def expenses_by_tag(request):
     expenses = Expense.objects.filter(
         tag_id=tag_id,
         date__year=year,
-        date__month=month
+        date__month=month,
+        is_saving=False
     )
 
     # Serialize the expenses
