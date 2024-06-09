@@ -79,9 +79,11 @@ class Income(models.Model):
     income_type = models.CharField(max_length=255, choices=[("Salary", "Salary"),
      ("Bonus", "Bonus"), ("Freelancing", "Freelancing")], default='Salary')
     source = models.CharField(max_length=255,default="")
-    date = models.DateField()
+    from_date = models.DateField(null=True, blank=True)
+    to_date = models.DateField(null=True, blank=True)
     notes = models.TextField(null=True, blank=True)
     recurring = models.BooleanField(default=False)
+    active = models.BooleanField(default=False)
     next_occurrence = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
