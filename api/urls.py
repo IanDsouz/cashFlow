@@ -1,6 +1,8 @@
 from django.urls import path
 from django.conf.urls import url, include
 from .views.expense import expense_summary, ExpenseUploadCreateAPIView, expense_all_year_monthly_total,expense_by_category, expense_by_category_total, expense_summary_top, expense_list, create_expense, CategoryList, expense_yearly_totals,expense_year_monthly_totals, expense_year_monthly, expenses_by_tag,LogoutView
+from .views.saving_area import SavingAreaListCreateAPIView, SavingAreaDetailAPIView
+
 
 from .views.income import (
     IncomeListAPIView, IncomeDetailAPIView, IncomeCreateAPIView, 
@@ -11,7 +13,6 @@ from .views.income import (
     get_yearly_income_total, get_yearly_expense_total,
 )
 from rest_framework import routers
-
 
 router = routers.DefaultRouter()
 
@@ -49,4 +50,8 @@ urlpatterns = [
     path('expenses/monthly-total/', get_monthly_expense_total, name='monthly-expense-total'),
     path('incomes/yearly-total/', get_yearly_income_total, name='yearly-income-total'),
     path('expenses/yearly-total/', get_yearly_expense_total, name='yearly-expense-total'),
+
+    path('saving_areas/', SavingAreaListCreateAPIView.as_view(), name='saving_area-list-create'),
+    path('saving_areas/<int:pk>/', SavingAreaDetailAPIView.as_view(), name='saving_area-detail'),
+
 ]
