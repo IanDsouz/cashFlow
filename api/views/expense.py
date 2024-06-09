@@ -5,8 +5,8 @@ from rest_framework import serializers,viewsets
 from django.http import JsonResponse
 from django.db.models import Sum, Case, When, Value, IntegerField, Q, F, ExpressionWrapper, fields, FloatField
 from rest_framework import generics, permissions
-from .models import Expense, Budget, Category, Tag, Account, User
-from .serializers import UserSerializer, ExpenseSerializer, BudgetSerializer, CategorySerializer, ExpenseDisplaySerializer, TagSerializer
+from  ..models import Expense, Budget, Category, Tag, Account, User
+from ..serializers import UserSerializer, ExpenseSerializer, BudgetSerializer, CategorySerializer, ExpenseDisplaySerializer, TagSerializer
 from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view
 from rest_framework.decorators import api_view, renderer_classes
@@ -21,6 +21,7 @@ import io, csv, pandas as pd
 from django.db import connection
 from django.db.models.functions import Coalesce
 import calendar 
+from django.db.models.functions import ExtractMonth
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.views import APIView
 from rest_framework.views import APIView
@@ -29,6 +30,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from django.views.decorators.csrf import csrf_exempt
 from django.db.models import Max
+from django.db.models.functions import ExtractYear
 
 class LogoutView(APIView):
      permission_classes = (IsAuthenticated,)
@@ -43,7 +45,7 @@ class LogoutView(APIView):
           except Exception as e:
                return Response(status=status.HTTP_400_BAD_REQUEST)
 
-class ExpenseCreateAPIView(generics.CreateAPIView):
+class ExpenseUploadCreateAPIView(generics.CreateAPIView):
     queryset = Expense.objects.all()
     serializer_class = ExpenseSerializer
 
@@ -258,6 +260,92 @@ def expense_summary_top(request, year, month):
 
 
 @api_view(['GET'])
+def expense_by_category(request, year, category_name):
+    # Retrieve the category object based on the provided name
+    try:
+        category = Category.objects.get(name=category_name)
+    except Category.DoesNotExist:
+        return JsonResponse({'error': 'Category not found'}, status=404)
+
+    # Filter expenses for the specified category and year
+    queryset = Expense.objects.filter(
+        category=category,
+        date__year=year,
+        is_saving=False
+    )
+
+    # Serialize the expenses
+    serializer = ExpenseSerializer(queryset, many=True)
+
+    # Group expenses by all months in the year
+    all_months = range(1, 13)  # All months in a year
+    monthly_expenses = (
+        queryset.annotate(month=ExtractMonth('date'))
+        .values('month')
+        .annotate(total=Sum('amount'))
+    )
+
+    monthly_expenses_data = [
+        {
+            'month': calendar.month_name[month],
+            'total_expense': int(expense['total']) if 'total' in expense else 0,
+        }
+        for month in all_months
+        for expense in monthly_expenses
+        if expense.get('month') == month
+    ]
+
+    response_data = {
+        'monthly_expenses': monthly_expenses_data,
+        'category_name': category_name,
+    }
+
+    return JsonResponse(response_data)
+
+
+@api_view(['GET'])
+def expense_by_category_total(request, from_year, to_year, category_name):
+    # Retrieve the category object based on the provided name
+    try:
+        category = Category.objects.get(name=category_name)
+    except Category.DoesNotExist:
+        return JsonResponse({'error': 'Category not found'}, status=404)
+
+    # Filter expenses for the specified category and year
+    queryset = Expense.objects.filter(
+        category=category,
+        date__year__range=(from_year, to_year),
+        is_saving=False
+    )
+
+    # Group expenses by year
+    yearly_expenses = (
+        queryset.annotate(year=ExtractYear('date'))
+        .values('year')
+        .annotate(total=Sum('amount'))
+        .order_by('year')
+    )
+
+    # Create a list of total expenses for each year
+    all_years = range(from_year, to_year + 1)
+    yearly_expenses_data = [
+        {
+            'year': year,
+            'total_expense': int(round(next((expense['total'] for expense in yearly_expenses if expense['year'] == year), 0), 2))
+        }
+        for year in all_years
+    ]
+
+    response_data = {
+        'yearly_expenses': yearly_expenses_data,
+        'category_name': category_name,
+    }
+
+    return JsonResponse(response_data)
+
+
+
+@api_view(['GET'])
 # @permission_classes([IsAuthenticated])
 def expense_yearly_totals(request, year):
     queryset = Expense.objects.filter(date__year=year, is_saving=False)
@@ -375,6 +463,77 @@ def expense_year_monthly_totals(request, start_year):
         })
 
     return JsonResponse({'data': yearly_data})
+
+
+@api_view(['GET'])
+def expense_all_year_monthly_total(request, start_year):
+    # Determine the latest year available in the data
+    latest_year = Expense.objects.aggregate(Max('date__year'))['date__year__max']
+
+    # Ensure start_year is within a valid range
+    start_year = max(start_year, 2000)  # Adjust the minimum year as needed
+    start_year = min(start_year, latest_year)
+
+    # Initialize a list to store yearly data
+    yearly_data = []
+
+    # Loop through each year from start_year to the latest year
+    for year in range(start_year, latest_year + 1):
+        # Get all months within the specified year
+        months = [str(month) for month in range(1, 13)]
+        month_names = [calendar.month_name[int(month)] for month in months]
+
+        # Initialize a list to store monthly totals as objects
+        yearly_expenses = []
+
+        # Loop through each month and calculate expenses
+        for month, month_name in zip(months, month_names):
+            # Calculate the total expenses for each category in the specified month and year
+            expenses = Expense.objects.filter(date__year=year, date__month=month, is_saving=False) \
+                .values('category__name') \
+                .annotate(total=Coalesce(Sum(F('amount')), 0.0, output_field=FloatField()))
+
+            # Calculate the total expenses for this month
+            total_expense = round(sum(expense['total'] for expense in expenses), 2)
+
+            # Append the monthly total as an object to the list
+            yearly_expenses.append({'name': month_name, 'value': total_expense})
+
+        # Calculate the total planned budget for the year
+        categories = Category.objects.all()
+        planned_budget = sum(budget.start_balance for budget in Budget.objects.filter(category__in=categories))
+
+        # Calculate the total actual expenses for the year
+        total_expense = sum(expense['value'] for expense in yearly_expenses)
+
+        # Append yearly data to the list
+        yearly_data.append({
+            'year': year,
+            'monthly_totals': yearly_expenses,
+            'total_expense': round(total_expense, 2),
+            'planned_budget': round(planned_budget, 2)
+        })
+
+    # Transform the data into the desired structure
+    transformed_data = []
+
+    # Loop through each month
+    for month in range(1, 13):
+        month_name = calendar.month_name[month]
+
+        # Create a dictionary for the current month
+        monthly_data = {'month': month_name}
+
+        # Loop through each year and add the corresponding value to the dictionary
+        for year_data in yearly_data:
+            year = year_data['year']
+            monthly_total = next((item['value'] for item in year_data['monthly_totals'] if item['name'] == month_name), 0)
+            monthly_data[year] = monthly_total
+
+        # Append the dictionary to the transformed_data list
+        transformed_data.append(monthly_data)
+
+    return JsonResponse({'data': transformed_data})
 
 @api_view(['GET'])
 @renderer_classes([JSONRenderer])
