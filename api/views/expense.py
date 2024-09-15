@@ -15,6 +15,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, FileUploadParser
 from rest_framework import status
 import csv
 import io
+import re
 import datetime
 from collections import Counter
 import io, csv, pandas as pd
@@ -48,6 +49,24 @@ class LogoutView(APIView):
 class ExpenseUploadCreateAPIView(generics.CreateAPIView):
     queryset = Expense.objects.all()
     serializer_class = ExpenseSerializer
+
+               
+    def get_generalized_tag(self, description):
+        # Define patterns for Amazon transactions
+        amazon_patterns = [
+            r"AMZNMKTPLACE",    # Matches "AMZNMKTPLACE"
+            r"AMAZON.CO.UK",     # Matches "AMAZON.CO.UK"
+            r"AMAZON\s*[A-Z]*"   # Matches "AMAZON" followed by any characters
+        ]
+
+        # Check if any of the patterns match the description
+        for pattern in amazon_patterns:
+            if re.search(pattern, description, re.IGNORECASE):
+                # Return the specific tag with ID 213 for all Amazon transactions
+                return get_object_or_404(Tag, pk=213)
+
+        # If no pattern matches, return None
+        return None
 
     def process_csv_file(self, file):
         expenses = []
@@ -87,9 +106,15 @@ class ExpenseUploadCreateAPIView(generics.CreateAPIView):
                     if filtered_words:
                         description_text = filtered_words[0]
 
-                    tag = Tag.objects.filter(raw_description__istartswith=description_text).first()
+                    tag = self.get_generalized_tag(description)
+
+                    # If no generalized tag found, try finding tag by description
+                    if not tag:
+                        tag = Tag.objects.filter(raw_description__istartswith=description_text).first()
+
                     account = get_object_or_404(Account, pk=1)
                     user = get_object_or_404(User, pk=1)
+
                     if tag is None:
                         category = get_object_or_404(Category, pk=6)
                         tag = get_object_or_404(Tag, pk=70)
@@ -97,7 +122,7 @@ class ExpenseUploadCreateAPIView(generics.CreateAPIView):
                         descriptions.append(description_text)
                     else:
                         tags_found_count += 1
-                        tag_id= tag.id if tag else None
+                        tag_id = tag.id if tag else None
                         category = tag.category
 
                 except Tag.DoesNotExist:
@@ -140,7 +165,7 @@ class ExpenseUploadCreateAPIView(generics.CreateAPIView):
         # Process the CSV file and create expenses
         expenses = self.process_csv_file(file)
         serializer = self.get_serializer(data=expenses, many=True)
-        
+
         if serializer.is_valid():
             serializer.save()
 
@@ -150,6 +175,7 @@ class ExpenseUploadCreateAPIView(generics.CreateAPIView):
                 status=status.HTTP_201_CREATED
             )
         else:
+            print(serializer.errors)
             return JsonResponse(
                 {'error': expenses},
                 status=status.HTTP_400_BAD_REQUEST

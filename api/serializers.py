@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Budget, Category, Account, Income, Tag, Expense
+from .models import User, Budget, Category, Account, Income, Tag, Expense, SavingArea
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -75,3 +75,8 @@ class UserSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         user = User.objects.create_user(**validated_data)
         return user
+
+class SavingAreaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SavingArea
+        fields = '__all__'
