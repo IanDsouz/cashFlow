@@ -21,6 +21,9 @@ class ExpenseAdmin(admin.ModelAdmin):
     ordering = ['-date']
     list_display = ['description', 'amount', 'date', 'category', 'account']
 
+class SavingAreaAdmin(admin.ModelAdmin):
+    inlines = [ExpenseInline]
+
 admin.site.register(Expense, ExpenseAdmin)
 
 admin.site.register(User)
@@ -29,4 +32,4 @@ admin.site.register(Income)
 admin.site.register(Category)
 admin.site.register(Account)
 admin.site.register(Tag, TagAdmin)
-admin.site.register(SavingArea)
+admin.site.register(SavingArea, SavingAreaAdmin)

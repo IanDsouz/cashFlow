@@ -53,5 +53,4 @@ urlpatterns = [
 
     path('saving_areas/', SavingAreaListCreateAPIView.as_view(), name='saving_area-list-create'),
     path('saving_areas/<int:pk>/', SavingAreaDetailAPIView.as_view(), name='saving_area-detail'),
-
 ]

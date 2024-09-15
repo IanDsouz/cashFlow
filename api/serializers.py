@@ -65,6 +65,7 @@ class BudgetSerializer(serializers.ModelSerializer):
         fields = ('id', 'start_balance', 'end_balance')
 
 
+
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
