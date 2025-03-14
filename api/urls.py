@@ -3,6 +3,7 @@ from django.conf.urls import url, include
 from .views.expense import  ExpenseCreateAPIView, ExpenseRetrieveAPIView, ExpenseUpdateAPIView, ExpenseDeleteAPIView, ExpenseByCategoryAPIView, expense_summary, ExpenseUploadCreateAPIView, expense_all_year_monthly_total,expense_by_category, expense_by_category_total, expense_summary_top, expense_list, create_expense, CategoryList, expense_yearly_totals,expense_year_monthly_totals, expense_year_monthly, expenses_by_tag,LogoutView,ExpenseCheckTagsAPIView
 from .views.saving_area import SavingAreaListCreateAPIView, SavingAreaDetailAPIView
 from .views.tag import TagListAPIView,TagCreateAPIView 
+from .views.finance import financial_summary
 
 
 from .views.income import (
@@ -70,4 +71,8 @@ urlpatterns = [
     #Tag URLs
     path('tags/', TagListAPIView.as_view(), name='tag-list'),
     path('tags/create/', TagCreateAPIView.as_view(), name='tag-create'),
+
+
+    #finance summary
+    path('financial-summary/', financial_summary, name='finance-summary'),
 ]
