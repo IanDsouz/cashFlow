@@ -32,6 +32,7 @@ from rest_framework.decorators import api_view, permission_classes, authenticati
 from django.views.decorators.csrf import csrf_exempt
 from django.db.models import Max
 from django.db.models.functions import ExtractYear
+from django.core.paginator import Paginator
 
 class LogoutView(APIView):
      permission_classes = (IsAuthenticated,)
@@ -45,8 +46,323 @@ class LogoutView(APIView):
                return Response(status=status.HTTP_205_RESET_CONTENT)
           except Exception as e:
                return Response(status=status.HTTP_400_BAD_REQUEST)
+            
+
+class ExpenseCreateAPIView(generics.CreateAPIView):
+    queryset = Expense.objects.all()
+    serializer_class = ExpenseSerializer
+
+    def generate_transaction_id(self):
+        """Generate a unique transaction ID based on timestamp."""
+        timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+        return f'TRAN-{timestamp}'
+
+    def post(self, request, *args, **kwargs):
+        # Get the data from the request
+        amount = request.data.get('amount')
+        description = request.data.get('description')
+        category_id = request.data.get('category')
+        date = request.data.get('date')
+        tag_id = request.data.get('tag')
+        notes = request.data.get('notes', '')
+        recurring = request.data.get('recurring', False)
+        payment_method = request.data.get('payment_method', 'Card')  # Default to 'Card'
+        user_id = request.data.get('user', 1)  # Default user ID is Ian (1)
+
+        if not amount or not category_id or not date or not tag_id:
+            return JsonResponse(
+                {'error': 'Amount, Category, Date, and Tag are required fields.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Generate unique transaction ID
+        transaction_id = self.generate_transaction_id()
+
+        # Get the category and tag objects
+        category = get_object_or_404(Category, pk=category_id)
+        tag = get_object_or_404(Tag, pk=tag_id)
+
+        # Get the user and account objects (assuming default user is Ian, and default account is 1)
+        user = get_object_or_404(User, pk=user_id)
+        account = get_object_or_404(Account, pk=1)  # Assuming account ID 1 is default
+
+        # Parse the date
+        try:
+            parsed_date = datetime.datetime.strptime(date, '%Y-%m-%d').date()  # Assuming 'YYYY-MM-DD' format
+        except ValueError:
+            return JsonResponse(
+                {'error': 'Invalid date format. Please use YYYY-MM-DD.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Prepare the expense data to be saved
+        expense_data = {
+            'description' : description,
+            'transaction_id': transaction_id,
+            'amount': amount,
+            'category': category.id,
+            'date': parsed_date,
+            'tag': tag.id,
+            'notes': notes,
+            'recurring': recurring,
+            'next_occurrence': None,  # This can be set later if recurring is True
+            'payment_method': payment_method,
+            'account': account.id,
+            'user': user.id,
+            'statement_text': tag.raw_description if tag else '',  # Assuming you want a description based on the tag
+        }
+
+        # Save the expense
+        serializer = self.get_serializer(data=expense_data)
+        if serializer.is_valid():
+            serializer.save()  # Save the expense record to the database
+            return JsonResponse(
+                {'message': 'Expense created successfully!',
+                 'data': serializer.data},
+                status=status.HTTP_201_CREATED
+            )
+        else:
+            return JsonResponse(
+                {'error': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+class ExpenseByCategoryAPIView(generics.ListAPIView):
+    queryset = Expense.objects.all()
+    serializer_class = ExpenseSerializer
+
+    def get(self, request, *args, **kwargs):
+        category_id = kwargs.get('category_id')  # Extract category_id from URL
+        expenses = self.queryset.filter(category_id=category_id)
+
+        if not expenses:
+            return JsonResponse(
+                {'error': 'No expenses found for this category.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = self.get_serializer(expenses, many=True)
+        return JsonResponse(
+            {'message': 'Expenses by category retrieved successfully!', 'data': serializer.data},
+            status=status.HTTP_200_OK
+        )
+
+class ExpenseDeleteAPIView(generics.DestroyAPIView):
+    queryset = Expense.objects.all()
+    serializer_class = ExpenseSerializer
+    lookup_field = 'id'  # Use transaction_id as the lookup field
+
+    def delete(self, request, *args, **kwargs):
+        expense = self.get_object()  # Retrieve the expense object based on transaction_id
+        expense.delete()  # Delete the expense
+        return JsonResponse(
+            {'message': 'Expense deleted successfully!'},
+            status=status.HTTP_204_NO_CONTENT
+        )
+
+class ExpenseUpdateAPIView(generics.UpdateAPIView):
+    queryset = Expense.objects.all()
+    serializer_class = ExpenseSerializer
+    lookup_field = 'id'  # Use transaction_id as the lookup field
+
+    def put(self, request, *args, **kwargs):
+        expense = self.get_object()  # Retrieve the expense object based on transaction_id
+        data = request.data
+
+        # Optionally, you can validate and preprocess the data if needed
+        data['id'] = expense.id  # Ensure the transaction_id stays the same
+
+        # Update the expense
+        serializer = self.get_serializer(expense, data=data, partial=False)
+        if serializer.is_valid():
+            serializer.save()
+            return JsonResponse(
+                {'message': 'Expense updated successfully!', 'data': serializer.data},
+                status=status.HTTP_200_OK
+            )
+        return JsonResponse(
+            {'error': serializer.errors},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    def patch(self, request, *args, **kwargs):
+        expense = self.get_object()  # Retrieve the expense object based on transaction_id
+        data = request.data
+
+        # Optionally, you can validate and preprocess the data if needed
+        data['transaction_id'] = expense.transaction_id  # Ensure the transaction_id stays the same
+
+        # Update the expense partially
+        serializer = self.get_serializer(expense, data=data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return JsonResponse(
+                {'message': 'Expense partially updated successfully!', 'data': serializer.data},
+                status=status.HTTP_200_OK
+            )
+        return JsonResponse(
+            {'error': serializer.errors},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+class ExpenseRetrieveAPIView(generics.RetrieveAPIView):
+    queryset = Expense.objects.all()
+    serializer_class = ExpenseSerializer
+    lookup_field = 'transaction_id'  # Use transaction_id as the lookup field
+
+    def get(self, request, *args, **kwargs):
+        expense = self.get_object()  # Retrieve the expense based on transaction_id
+        serializer = self.get_serializer(expense)
+        return JsonResponse(
+            {'message': 'Expense retrieved successfully!', 'data': serializer.data},
+            status=status.HTTP_200_OK
+        )
+
 
 class ExpenseUploadCreateAPIView(generics.CreateAPIView):
+    queryset = Expense.objects.all()
+    serializer_class = ExpenseSerializer
+
+    def post(self, request, *args, **kwargs):
+        corrected_expenses = request.data.get('expenses')  # Corrected expenses with resolved tags
+
+        if not corrected_expenses:
+            return JsonResponse(
+                {'error': 'No expenses data provided'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = self.get_serializer(data=corrected_expenses, many=True)
+        
+        if serializer.is_valid():
+            serializer.save()
+            return JsonResponse(
+                {'message': 'Expenses created successfully!',
+                 'data': serializer.data},
+                status=status.HTTP_201_CREATED
+            )
+        else:
+            return JsonResponse(
+                {'error': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+class ExpenseCheckTagsAPIView(generics.CreateAPIView):
+    queryset = Expense.objects.all()
+    serializer_class = ExpenseSerializer
+
+    def get_generalized_tag(self, description):
+        # Define patterns for Amazon transactions
+        amazon_patterns = [
+            r"AMZNMKTPLACE",    
+            r"AMAZON.CO.UK",     
+            r"AMAZON\s*[A-Z]*"   
+        ]
+
+        # Check if any of the patterns match the description
+        for pattern in amazon_patterns:
+            if re.search(pattern, description, re.IGNORECASE):
+                return get_object_or_404(Tag, pk=213)
+        return None
+
+    def process_csv_file(self, file):
+        expenses = []
+        tags_found_count = 0
+        tags_not_found_count = 0
+        descriptions = []
+
+        try:
+            df = pd.read_csv(file)
+        except pd.errors.EmptyDataError:
+            raise ValueError("The CSV file is empty or in an unsupported format.")
+
+        for index, row in df.iterrows():
+            date_str = row['Date']
+            description = row['Description']
+            amount_str = row['Amount']
+            reference = row['Reference']
+
+            try:
+                amount = float(amount_str)
+            except ValueError:
+                raise ValueError(f"Invalid amount value: {amount_str}")
+
+            if amount > 0:
+                date_format = '%d/%m/%Y'
+                try:
+                    parsed_date = datetime.datetime.strptime(date_str, date_format).date()
+                except ValueError:
+                    raise ValueError(f"Invalid date format: {date_str}")
+
+                description_text = description.split() if 'Description' in df.columns else []
+                filtered_words = [word for word in description_text if len(word) >= 3]
+                if filtered_words:
+                    description_text = filtered_words[0]
+
+                tag = self.get_generalized_tag(description)
+
+                if not tag:
+                    tag = Tag.objects.filter(raw_description__istartswith=description_text).first()
+
+                account = get_object_or_404(Account, pk=1)
+                user = get_object_or_404(User, pk=1)
+
+                if tag is None:
+                    category = get_object_or_404(Category, pk=6)
+                    tag = get_object_or_404(Tag, pk=70)
+                    tags_not_found_count += 1
+                    descriptions.append(description_text)
+                else:
+                    tags_found_count += 1
+                    tag_id = tag.id if tag else None
+                    category = tag.category
+
+                expense = {
+                    'transaction_id': reference.strip("'"),
+                    'amount': amount,
+                    'category': category.id, 
+                    'date': parsed_date,
+                    'tag': tag.id,
+                    'notes': '',
+                    'description': description,
+                    'recurring': False,
+                    'next_occurrence': None,
+                    'payment_method': "Card",
+                    'account': account.id,
+                    'user': user.id,
+                    'statement_text': description_text
+                }
+                expenses.append(expense)
+
+        process_data = {
+            'expenses': expenses,
+            'tags_not_found_count': tags_not_found_count,
+            'descriptions': descriptions
+        }
+
+        return process_data
+
+    def post(self, request, *args, **kwargs):
+        file = request.FILES.get('file')
+
+        if not file:
+            return JsonResponse(
+                {'error': 'Missing file'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        process_data = self.process_csv_file(file)
+
+        return JsonResponse(
+            {
+                'warning': 'Some tags were not found.' if process_data['tags_not_found_count'] > 0 else 'No tags missing.',
+                'tags_not_found_count': process_data['tags_not_found_count'],
+                'descriptions': process_data['descriptions'],
+                'expenses': process_data['expenses']
+            },
+            status=status.HTTP_206_PARTIAL_CONTENT if process_data['tags_not_found_count'] > 0 else status.HTTP_200_OK
+        )
+
     queryset = Expense.objects.all()
     serializer_class = ExpenseSerializer
 
@@ -150,8 +466,14 @@ class ExpenseUploadCreateAPIView(generics.CreateAPIView):
         description_counts = Counter(descriptions)
         for description, count in description_counts.items():
             print(f"{description}: {count}")
-            
-        return expenses
+
+        process_data = {}    
+
+        process_data['expenses'] = expenses
+        process_data['tags_not_found_count'] = tags_not_found_count
+        process_data['descriptions'] = descriptions
+
+        return process_data
 
     def post(self, request, *args, **kwargs):
         file = request.FILES.get('file')
@@ -163,8 +485,20 @@ class ExpenseUploadCreateAPIView(generics.CreateAPIView):
             )
 
         # Process the CSV file and create expenses
-        expenses = self.process_csv_file(file)
-        serializer = self.get_serializer(data=expenses, many=True)
+        process_data = self.process_csv_file(file)
+
+        if process_data['tags_not_found_count'] > 0:
+            return JsonResponse(
+            {
+                'warning': 'Some tags were not found.',
+                'tags_not_found_count': process_data['tags_not_found_count'],
+                'descriptions': process_data['descriptions'],
+                'expenses': process_data['expenses']
+            },
+            status=status.HTTP_206_PARTIAL_CONTENT  # Use 206 for partial success
+        )
+
+        serializer = self.get_serializer(data=process_data['expenses'], many=True)
 
         if serializer.is_valid():
             serializer.save()
@@ -175,9 +509,8 @@ class ExpenseUploadCreateAPIView(generics.CreateAPIView):
                 status=status.HTTP_201_CREATED
             )
         else:
-            print(serializer.errors)
             return JsonResponse(
-                {'error': expenses},
+                {'error': serializer.errors},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -284,7 +617,6 @@ def expense_summary_top(request, year, month):
         top_expenses = category_expenses[:5]
     return JsonResponse({'expenses': top_expenses, 'total_expense': total_expense, 'planned_budget': planned_budget})
 
-
 @api_view(['GET'])
 def expense_by_category(request, year, category_name):
     # Retrieve the category object based on the provided name
@@ -368,7 +700,6 @@ def expense_by_category_total(request, from_year, to_year, category_name):
     }
 
     return JsonResponse(response_data)
-
 
 
 @api_view(['GET'])
@@ -561,23 +892,97 @@ def expense_all_year_monthly_total(request, start_year):
 
     return JsonResponse({'data': transformed_data})
 
+
 @api_view(['GET'])
 @renderer_classes([JSONRenderer])
 def expense_list(request):
+    # Extract query parameters
     category = request.query_params.get('category', None)
     month = request.query_params.get('month', None)
+    page = int(request.query_params.get('page', 1))
+    page_size = int(request.query_params.get('page_size', 10))
+    sort_field = request.query_params.get('sort_field', 'date')
+    sort_order = request.query_params.get('sort_order', 'asc')
+
+    # Start with all expenses that are not savings
+    expenses = Expense.objects.filter(is_saving=False)
+
+    # Filter by category if provided
+    if category:
+        expenses = expenses.filter(category__name=category)
+
+    # Filter by month if provided
+    if month:
+        expenses = expenses.filter(date__month=month)
+
+    # Sorting logic based on query params
+    if sort_order == 'desc':
+        sort_field = f'-{sort_field}'
+    expenses = expenses.order_by(sort_field)
+
+    # Pagination setup
+    paginator = Paginator(expenses, page_size)
+    paginated_expenses = paginator.get_page(page)
+
+    # Serialize expenses into a structured response
+    expenses_data = [
+        {
+            'type': 'expenses',
+            'id': str(expense.id),  # Primary key of the expense
+            'date': expense.date.isoformat(),  # String representation of date
+            'amount': str(expense.amount),  # Amount as a string
+            'tag': {
+                'id': str(expense.tag.id),  # Tag ID
+                'name': expense.tag.name,  # Tag name
+                # Add any other fields you want to return from the Tag model
+            } if expense.tag else {},  # Include the tag object, or empty dict if no tag
+            'category': {
+                'id': str(expense.category.id),  # Category ID
+                'name': expense.category.name,  # Category name
+            } if expense.category else {},  # Include the category object, or empty dict if no category
+            'payment_method': expense.payment_method,  # Payment method
+            'account': {
+                'id': str(expense.account.id),  # Account ID
+                'name': expense.account.name,  # Account name
+            } if expense.account else {},  # Include the account object, or empty dict if no account
+            'description': expense.description,  # Description of the expense
+        }
+        for expense in paginated_expenses
+    ]
+
+    # Return paginated expenses in the response
+    return JsonResponse({
+        'data': expenses_data,
+        'total_pages': paginator.num_pages,
+        'current_page': page,
+        'total_items': paginator.count,
+    })
+    category = request.query_params.get('category', None)
+    month = request.query_params.get('month', None)
+    page = int(request.query_params.get('page', 1))
+    page_size = int(request.query_params.get('page_size', 10))
+    sort_field = request.query_params.get('sort_field', 'date')
+    sort_order = request.query_params.get('sort_order', 'asc')
 
     expenses = Expense.objects.filter(is_saving=False)
 
-    if category is not None:
+    if category:
         expenses = expenses.filter(category__name=category)
 
-    if month is not None:
+    if month:
         expenses = expenses.filter(date__month=month)
 
-    expenses_data = []
-    for expense in expenses:
-        expenses_data.append({
+    # Sorting logic
+    if sort_order == 'desc':
+        sort_field = f'-{sort_field}'
+    expenses = expenses.order_by(sort_field)
+
+    # Pagination logic
+    paginator = Paginator(expenses, page_size)
+    paginated_expenses = paginator.get_page(page)
+
+    expenses_data = [
+        {
             'type': 'expenses',
             'id': str(expense.id),
             'date': expense.date.isoformat(),
@@ -586,10 +991,16 @@ def expense_list(request):
             'category': expense.category.name,
             'payment_method': expense.payment_method,
             'account': expense.account.name,
-        })
+            'description': expense.description,
+        }
+        for expense in paginated_expenses
+    ]
 
     return JsonResponse({
-        'data': expenses_data
+        'data': expenses_data,
+        'total_pages': paginator.num_pages,
+        'current_page': page,
+        'total_items': paginator.count,
     })
 
 
@@ -669,3 +1080,19 @@ def create_expense(request):
         return JsonResponse(serializer.data, status=status.HTTP_201_CREATED)
     return JsonResponse(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
+
+
+@api_view(['GET'])
+def get_monthly_expense_total(request):
+    """
+    Get total expense for the current month, considering date ranges.
+    """
+    today = datetime.today()
+
+    # Filter expenses where date falls within the current month and year
+    monthly_expense_total = Expense.objects.filter(
+        date__month=today.month,
+        date__year=today.year
+    ).aggregate(total=Sum('amount'))['total'] or 0
+
+    return Response({'monthly_expense_total': monthly_expense_total})
