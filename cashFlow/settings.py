@@ -1,9 +1,18 @@
 from pathlib import Path
 from datetime import timedelta
+import firebase_admin 
+from firebase_admin import credentials
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = 'django-insecure-5_9wo52lmpdu)fh&sou@l!n+r%^v#qc+4wx^+z=9wzif3dt6sz'
+
+
+
+
+cred = credentials.Certificate("firebase_integration/firebase_admin_sdk.json")
+firebase_admin.initialize_app(cred)
+
 
 DEBUG = True
 
@@ -29,6 +38,7 @@ INSTALLED_APPS = [
     'frontend.apps.FrontendConfig',
     'corsheaders',
     'django_filters',
+    'firebase_integration',
 ]
 
 REST_FRAMEWORK = {

@@ -28,3 +28,5 @@ node_modules/
 
 # Ignore compiled React files
 build/
+
+firebase_integration/firebase_admin_sdk.json
